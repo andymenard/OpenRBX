@@ -81,7 +81,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#else
+#elif !defined(__ANDROID__)
 #include "NativeInput.h"
 
 #include <xcb/xcb.h>
@@ -94,7 +94,7 @@ static QString escapeMnemonics(QString text)
 
 bool g_overrideLockGameLayout;
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__ANDROID__)
 class AcquiredKeyFilter : public QAbstractNativeEventFilter
 {
 public:
@@ -194,7 +194,7 @@ CMainFrame::CMainFrame()
 	g_overrideLockGameLayout = Profile::GetProfileInt(QString(), "OverrideLockViewGamelayout", 0) == 1;
 	RBX::Accoutrement::writeUnlocked = g_overrideLockGameLayout;
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__ANDROID__)
 	m_acquiredKeyFilter = std::make_unique<AcquiredKeyFilter>(this);
 	QCoreApplication::instance()->installNativeEventFilter(m_acquiredKeyFilter.get());
 #endif
@@ -227,7 +227,12 @@ CMainFrame::CMainFrame()
 			enterGameLayout();
 		}
 	});
+#ifdef __ANDROID__
+	// Full screen is the game layout here (see setFullScreen), which other commands also change.
+	addCommand(ID_VIEW_FULL_SCREEN, [this]() { setFullScreen(!m_gameLayout); });
+#else
 	addCommand(ID_VIEW_FULL_SCREEN, [this]() { setFullScreen(!m_fullScreen); });
+#endif
 	addCommand(ID_TOOLS_CUSTOMIZE, [this]() { showCustomize(); });
 
 	for (unsigned id :
@@ -499,6 +504,11 @@ void CMainFrame::buildMenu(QMenu* menu, MenuIterator& it, MenuIterator end)
 
 void CMainFrame::createMenuBar()
 {
+#ifdef __ANDROID__
+	// A native menu bar becomes the activity's action bar, which shows the app title above the client
+	// and cannot be hidden with the rest of the IDE; keep the menus inside the window instead.
+	menuBar()->setNativeMenuBar(false);
+#endif
 	std::span<const Resources::MenuEntry> entries = Resources::menu(mainResourceId);
 	MenuIterator it = entries.begin();
 	while (it != entries.end()) {
@@ -1400,6 +1410,12 @@ void CMainFrame::restorePlacement(bool show)
 		return;
 	}
 
+#ifdef __ANDROID__
+	// A phone or tablet has no desktop to place the window on; the client fills the screen.
+	showFullScreen();
+	return;
+#endif
+
 	if (maximized) {
 		showMaximized();
 	}
@@ -1449,6 +1465,20 @@ void CMainFrame::restoreResolution()
 
 void CMainFrame::setFullScreen(bool fullScreen)
 {
+#ifdef __ANDROID__
+	// The window already fills the screen, so full screen hides the IDE around the game view instead.
+	if (fullScreen) {
+		enterGameLayout();
+	}
+	else {
+		RBX::ScopedAssign<bool> unlocked(m_gameLayoutLocked, false);
+		leaveGameLayout();
+	}
+	m_fullScreen = m_gameLayout;
+	// Let the game view run under the camera cutout too; the IDE keeps clear of it.
+	setAttribute(Qt::WA_ContentsMarginsRespectsSafeArea, !m_fullScreen);
+	return;
+#endif
 	if (m_fullScreen == fullScreen) {
 		return;
 	}
@@ -1478,7 +1508,12 @@ void CMainFrame::setFullScreen(bool fullScreen)
 
 void CMainFrame::updateMaximumSize()
 {
+#ifdef __ANDROID__
+	// The window always fills the device screen, whatever full screen size the settings name.
+	if (false) {
+#else
 	if (!m_changingResolution && !m_fullScreen && m_gameLayout) {
+#endif
 		G3D::Vector2int16 size = CRenderSettings::singleton().getFullscreenSize();
 		setMaximumSize(size.x, size.y);
 	}
@@ -1489,6 +1524,10 @@ void CMainFrame::updateMaximumSize()
 
 void CMainFrame::applicationActivated(bool active)
 {
+#ifdef __ANDROID__
+	// No display mode to restore, and minimizing would hide the activity's only window.
+	return;
+#endif
 	if (m_fullScreen && !m_changingResolution && !active) {
 		restoreResolution();
 		showMinimized();
@@ -1508,9 +1547,11 @@ void CMainFrame::changeEvent(QEvent* event)
 		m_activeView->activateFrame(active);
 	}
 
+#ifndef __ANDROID__
 	if (m_fullScreen && !m_changingResolution && active) {
 		changeResolution();
 	}
+#endif
 }
 
 bool CMainFrame::nativeEvent(const QByteArray& eventType, void* message, qintptr* result)

@@ -29,6 +29,9 @@ std::shared_ptr<TopMenuBar> GuiBuilder::buildMenu()
 	std::shared_ptr<RelativePanel> menu = Creatable<Instance>::create<RelativePanel>(layout);
 	menu->setName("MainMenu");
 
+#ifdef __ANDROID__
+	menu->addGuiItem(Creatable<Instance>::create<MenuItem>(getVerb("PlaySolo"), "Play"));
+#endif
 	menu->addGuiItem(Creatable<Instance>::create<MenuItem>(getVerb("TogglePlayMode"), "Tools"));
 	menu->addGuiItem(Creatable<Instance>::create<MenuItem>(getVerb("ToggleToolbox"), "Insert"));
 	menu->addGuiItem(Creatable<Instance>::create<MenuItem>(getVerb("ToggleFullScreen"), "Fullscreen"));
@@ -38,7 +41,12 @@ std::shared_ptr<TopMenuBar> GuiBuilder::buildMenu()
 	for (unsigned int i = 0; i < menu->numChildren(); ++i) {
 		GuiItem* item = menu->getGuiItem(i);
 		if (item != nullptr) {
+#ifdef __ANDROID__
+			// Big enough to hit with a finger.
+			item->setGuiSize(G3D::Vector2(120, 40));
+#else
 			item->setGuiSize(G3D::Vector2(100, 20));
+#endif
 		}
 	}
 
@@ -52,6 +60,8 @@ void GuiBuilder::buildRightPaletteItems(Adorn* adorn, std::shared_ptr<TopMenuBar
 	);
 	palette->addGuiItem(Creatable<Instance>::create<ImageButton>(adorn, getVerb("ReportAbuse"), "ReportAbuse"));
 
+#ifndef __ANDROID__
+	// Android uses touch dragging and pinching for camera movement and zoom.
 	std::shared_ptr<TopMenuBar> cameraLeft = Creatable<Instance>::create<TopMenuBar>("CameraLeft", Layout::VERTICAL);
 	cameraLeft->addGuiItem(Creatable<Instance>::create<ImageButton>(adorn, getVerb("CameraTiltUp"), "Tilt Up"));
 	cameraLeft->addGuiItem(Creatable<Instance>::create<ImageButton>(adorn, getVerb("CameraTiltDown"), "Tilt Down"));
@@ -66,6 +76,7 @@ void GuiBuilder::buildRightPaletteItems(Adorn* adorn, std::shared_ptr<TopMenuBar
 	cameraPanel->addGuiItem(cameraRight);
 
 	palette->addGuiItem(cameraPanel);
+#endif
 }
 
 std::shared_ptr<TopMenuBar> GuiBuilder::buildChatHud()

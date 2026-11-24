@@ -240,6 +240,10 @@ LocalBackpackItem::LocalBackpackItem() = default;
 LocalBackpack::LocalBackpack() : lastRemovedIndex(-1)
 {
 	yLocation = Rect::BOTTOM;
+#ifdef __ANDROID__
+	// Keep tool touches clear of the left-hand joystick.
+	xLocation = Rect::RIGHT;
+#endif
 }
 
 void LocalBackpack::onServiceProvider(const ServiceProvider* oldProvider, const ServiceProvider* newProvider)

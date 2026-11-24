@@ -10,7 +10,9 @@
 #include "G3D/Matrix3.h"
 #include "G3D/spline.h"
 #include "G3D/GLight.h"
+#ifndef __ANDROID__
 #include <sys/timeb.h>
+#endif
 #include <sys/types.h> 
 
 #ifndef _MSC_VER

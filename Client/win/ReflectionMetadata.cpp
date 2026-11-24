@@ -4,6 +4,9 @@
 #include "v8xml/XmlSerializer.h"
 
 #include <G3D/System.h>
+#ifdef __ANDROID__
+#include "AndroidAssets.h"
+#endif
 #include <filesystem>
 #include <fstream>
 
@@ -164,7 +167,11 @@ std::shared_ptr<Reflection> Reflection::singleton()
 	if (!reflection) {
 		reflection = Creatable<Instance>::create<Reflection>();
 
+#ifdef __ANDROID__
+		std::filesystem::path fileName = AndroidAssets::dataDirectory();
+#else
 		std::filesystem::path fileName = std::filesystem::path(G3D::System::currentProgramFilename()).parent_path();
+#endif
 		reflection->load((fileName / "ReflectionMetadata.xml").string().c_str());
 	}
 	return reflection;

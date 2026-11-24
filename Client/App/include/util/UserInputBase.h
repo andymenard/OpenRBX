@@ -41,12 +41,15 @@ public:
 
 	void getNavKeys(NavKeys& navKeys) const;
 	void renderGameCursor(Adorn*);
+	// A touch screen has no pointer to show; the view hides the game cursor while touch is in use.
+	void setCursorHidden(bool hidden) { cursorHidden = hidden; }
 	bool altKeyDown() const { return keyDown(SDLK_RALT) || keyDown(SDLK_LALT); }
 	bool shiftKeyDown() const { return keyDown(SDLK_RSHIFT) || keyDown(SDLK_LSHIFT); }
 
 	bool ctrlKeyDown() const { return keyDown(SDLK_RCTRL) || keyDown(SDLK_LCTRL); }
 
 private:
+	bool cursorHidden = false;
 	ContentId currentCursorId;
 	G3D::ReferenceCountedPointer<TextureProxyBase> currentCursor;
 };

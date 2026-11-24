@@ -11,17 +11,20 @@ namespace RBX {
 
 G3D::Rect2D AdornG3D::getViewport() const
 {
-	return renderDevice->getViewport();
+	G3D::Rect2D viewport = renderDevice->getViewport();
+	return G3D::Rect2D::xywh(
+		viewport.x0() / uiScale, viewport.y0() / uiScale, viewport.width() / uiScale, viewport.height() / uiScale
+	);
 }
 
 int AdornG3D::getWidth() const
 {
-	return renderDevice->getWidth();
+	return static_cast<int>(renderDevice->getWidth() / uiScale);
 }
 
 int AdornG3D::getHeight() const
 {
-	return renderDevice->getHeight();
+	return static_cast<int>(renderDevice->getHeight() / uiScale);
 }
 
 void AdornG3D::rect2d(const G3D::Rect2D& rect, const G3D::Color4& color) const

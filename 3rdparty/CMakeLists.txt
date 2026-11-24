@@ -22,6 +22,24 @@ if (WIN32 OR NOT OPENRBX_USE_SYSTEM_QT)
   )
   if (WIN32)
     list(APPEND OPENRBX_QTBASE_OPTIONS -DFEATURE_windeployqt=OFF -DFEATURE_printsupport=OFF)
+  elseif (ANDROID)
+    list(APPEND OPENRBX_QTBASE_OPTIONS
+      ${OPENRBX_ANDROID_CMAKE_ARGS}
+      -DANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}
+      -DQT_HOST_PATH=${QT_HOST_PATH}
+      -DQT_ALLOW_DOWNLOAD=ON
+      -DFEATURE_opengles2=ON
+      -DFEATURE_printsupport=ON
+      -DFEATURE_cups=OFF
+      -DFEATURE_icu=OFF
+      -DFEATURE_system_zlib=OFF
+      -DFEATURE_system_png=OFF
+      -DFEATURE_system_jpeg=OFF
+      -DFEATURE_system_pcre2=OFF
+      -DFEATURE_system_harfbuzz=OFF
+      -DFEATURE_system_doubleconversion=OFF
+      -DFEATURE_system_libb2=OFF
+    )
   else()
     list(APPEND OPENRBX_QTBASE_OPTIONS
       -DFEATURE_printsupport=ON
@@ -64,6 +82,15 @@ if (WIN32 OR NOT OPENRBX_USE_SYSTEM_QT)
     endif()
   endif()
 
+  set(OPENRBX_QT5COMPAT_CROSS_OPTIONS)
+  if (ANDROID)
+    # Standalone Qt modules cross-compile through the toolchain file qtbase installs, which chains to the NDK one.
+    set(OPENRBX_QT5COMPAT_CROSS_OPTIONS
+      -DCMAKE_TOOLCHAIN_FILE=${OPENRBX_QTBASE_PREFIX}/lib/cmake/Qt6/qt.toolchain.cmake
+      -DQT_HOST_PATH=${QT_HOST_PATH}
+    )
+  endif()
+
   if (NOT EXISTS "${OPENRBX_QTBASE_PREFIX}/lib/cmake/Qt6Core5Compat/Qt6Core5CompatConfig.cmake")
     set(OPENRBX_QT5COMPAT_BINARY_DIR "${CMAKE_BINARY_DIR}/3rdparty/qt5compat-build")
     message(STATUS "Building qt5compat in ${OPENRBX_QT5COMPAT_BINARY_DIR}")
@@ -74,6 +101,7 @@ if (WIN32 OR NOT OPENRBX_USE_SYSTEM_QT)
               -DCMAKE_INSTALL_PREFIX=${OPENRBX_QTBASE_PREFIX}
               -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
               -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+              ${OPENRBX_QT5COMPAT_CROSS_OPTIONS}
               -DQT_BUILD_TESTS=OFF
               -DQT_BUILD_EXAMPLES=OFF
               -DQT_GENERATE_SBOM=OFF
@@ -100,7 +128,15 @@ foreach(option ALSOFT_UTILS ALSOFT_EXAMPLES ALSOFT_INSTALL ALSOFT_INSTALL_CONFIG
                ALSOFT_INSTALL_AMBDEC_PRESETS ALSOFT_INSTALL_EXAMPLES ALSOFT_INSTALL_UTILS ALSOFT_UPDATE_BUILD_VERSION)
   set(${option} OFF CACHE BOOL "" FORCE)
 endforeach()
-if (NOT WIN32)
+if (ANDROID)
+  # OpenSL ES is in every Android release the client targets; Oboe would need a separate dependency.
+  foreach(option ALSOFT_BACKEND_OSS ALSOFT_BACKEND_JACK ALSOFT_BACKEND_PORTAUDIO ALSOFT_BACKEND_SNDIO
+                 ALSOFT_BACKEND_SOLARIS ALSOFT_BACKEND_PIPEWIRE ALSOFT_BACKEND_PULSEAUDIO ALSOFT_BACKEND_ALSA
+                 ALSOFT_BACKEND_OBOE ALSOFT_BACKEND_SDL2 ALSOFT_BACKEND_SDL3 ALSOFT_BACKEND_WAVE)
+    set(${option} OFF CACHE BOOL "" FORCE)
+  endforeach()
+  set(ALSOFT_REQUIRE_OPENSL ON CACHE BOOL "" FORCE)
+elseif (NOT WIN32)
   foreach(option ALSOFT_BACKEND_OSS ALSOFT_BACKEND_JACK ALSOFT_BACKEND_PORTAUDIO ALSOFT_BACKEND_SNDIO
                  ALSOFT_BACKEND_SOLARIS)
     set(${option} OFF CACHE BOOL "" FORCE)
@@ -157,12 +193,39 @@ file(GLOB OPENRBX_GLG3D_SOURCES "${G3D}/glg3dcpp/*.cpp")
 
 add_library(graphics3d STATIC ${OPENRBX_GRAPHICS3D_SOURCES})
 add_library(glg3d STATIC ${OPENRBX_GLG3D_SOURCES})
-add_library(glg3d_egl STATIC ${OPENRBX_GLG3D_SOURCES})
-target_compile_definitions(glg3d_egl PRIVATE G3D_EGL)
-target_link_libraries(glg3d_egl PUBLIC egl)
-set(OPENRBX_G3D_TARGETS graphics3d glg3d glg3d_egl)
-if (NOT WIN32)
-  target_link_libraries(glg3d PUBLIC OpenGL::GL X11::X11)
+if (ANDROID)
+  # Android only has OpenGL ES. gl4es translates the client's fixed-function OpenGL to ES 2.0 on the
+  # context Qt creates, so it is built without its own X11 or EGL context handling. It stays a shared
+  # library: G3D defines globals with the names of GL extension entry points that gl4es exports. The
+  # client lists it before the system GLES library, which is where its GL calls bind.
+  set(NOX11 ON CACHE BOOL "" FORCE)
+  set(STATICLIB OFF CACHE BOOL "" FORCE)
+  set(NO_INIT_CONSTRUCTOR OFF CACHE BOOL "" FORCE)
+  set(USE_ANDROID_LOG ON CACHE BOOL "" FORCE)
+  # gl4es declares option(ANDROID); keep the toolchain's normal variable instead of a cache copy.
+  set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+  add_subdirectory(gl4es EXCLUDE_FROM_ALL)
+  # gl4es sends its output to its source directory; keep it in the build tree.
+  set_target_properties(GL PROPERTIES
+    OUTPUT_NAME "gl4es"
+    SUFFIX ".so"
+    LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+  )
+  add_library(gl4es INTERFACE)
+  target_include_directories(gl4es INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/gl4es/include")
+  target_link_libraries(gl4es INTERFACE GL)
+  target_compile_definitions(glg3d PRIVATE G3D_GL4ES)
+  target_link_libraries(glg3d PUBLIC gl4es)
+  set(OPENRBX_G3D_TARGETS graphics3d glg3d)
+else()
+  add_library(glg3d_egl STATIC ${OPENRBX_GLG3D_SOURCES})
+  target_compile_definitions(glg3d_egl PRIVATE G3D_EGL)
+  target_link_libraries(glg3d_egl PUBLIC egl)
+  set(OPENRBX_G3D_TARGETS graphics3d glg3d glg3d_egl)
+  if (NOT WIN32)
+    target_link_libraries(glg3d PUBLIC OpenGL::GL X11::X11)
+  endif()
 endif()
 
 foreach(name ${OPENRBX_G3D_TARGETS})
@@ -187,7 +250,8 @@ if (MSVC)
 endif()
 
 add_library(egl INTERFACE)
-if (WIN32)
+if (ANDROID)
+elseif (WIN32)
   set(OPENRBX_MESA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/mesa")
   set(OPENRBX_MESA_BINARY_DIR "${CMAKE_BINARY_DIR}/3rdparty/mesa-build")
   set(OPENRBX_MESA_PREFIX "${OPENRBX_MESA_BINARY_DIR}/install")
@@ -240,6 +304,9 @@ if (WIN32)
 else()
   add_library(glu STATIC ${OPENRBX_GLU_SOURCES})
   set_target_properties(glu PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  if (ANDROID)
+    target_include_directories(glu PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/gl4es/include")
+  endif()
 endif()
 target_include_directories(glu PRIVATE
   "${GLU}/src/include" "${GLU}/src/libnurbs/interface" "${GLU}/src/libnurbs/internals" "${GLU}/src/libnurbs/nurbtess"
@@ -571,7 +638,9 @@ foreach(option SDL_SHARED SDL_TEST_LIBRARY SDL_TESTS SDL_EXAMPLES SDL_INSTALL SD
   set(${option} OFF CACHE BOOL "" FORCE)
 endforeach()
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
-add_subdirectory(SDL3 EXCLUDE_FROM_ALL)
+if (NOT ANDROID)
+  add_subdirectory(SDL3 EXCLUDE_FROM_ALL)
+endif()
 
 find_package(Perl REQUIRED)
 
@@ -583,9 +652,23 @@ endif()
 
 if (NOT EXISTS "${OPENRBX_OPENSSL_PREFIX}/include/openssl/ssl.h")
   message(STATUS "Building OpenSSL in ${OPENRBX_OPENSSL_BINARY_DIR}")
+  set(OPENRBX_OPENSSL_ENV)
   if (WIN32)
     set(OPENRBX_OPENSSL_TARGET VC-WIN64A no-asm)
     set(OPENRBX_OPENSSL_MAKE nmake)
+  elseif (ANDROID)
+    # OpenSSL's Android targets find clang on PATH and check it belongs to ANDROID_NDK_ROOT.
+    cmake_host_system_information(RESULT OPENRBX_JOBS QUERY NUMBER_OF_LOGICAL_CORES)
+    get_filename_component(OPENRBX_NDK_BIN "${CMAKE_C_COMPILER}" DIRECTORY)
+    set(OPENRBX_OPENSSL_ENV "${CMAKE_COMMAND}" -E env "ANDROID_NDK_ROOT=${ANDROID_NDK}"
+        "PATH=${OPENRBX_NDK_BIN}:$ENV{PATH}")
+    if (ANDROID_ABI STREQUAL "arm64-v8a")
+      set(OPENRBX_OPENSSL_TARGET android-arm64)
+    else()
+      set(OPENRBX_OPENSSL_TARGET android-${ANDROID_ABI})
+    endif()
+    list(APPEND OPENRBX_OPENSSL_TARGET -D__ANDROID_API__=${ANDROID_PLATFORM_LEVEL})
+    set(OPENRBX_OPENSSL_MAKE ${OPENRBX_OPENSSL_ENV} make -j${OPENRBX_JOBS})
   else()
     cmake_host_system_information(RESULT OPENRBX_JOBS QUERY NUMBER_OF_LOGICAL_CORES)
     set(OPENRBX_OPENSSL_TARGET)
@@ -593,7 +676,7 @@ if (NOT EXISTS "${OPENRBX_OPENSSL_PREFIX}/include/openssl/ssl.h")
   endif()
   file(MAKE_DIRECTORY "${OPENRBX_OPENSSL_BINARY_DIR}")
   execute_process(
-    COMMAND "${PERL_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/openssl/Configure" ${OPENRBX_OPENSSL_TARGET}
+    COMMAND ${OPENRBX_OPENSSL_ENV} "${PERL_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/openssl/Configure" ${OPENRBX_OPENSSL_TARGET}
             no-shared no-tests no-docs no-apps "--prefix=${OPENRBX_OPENSSL_PREFIX}" --libdir=lib
     WORKING_DIRECTORY "${OPENRBX_OPENSSL_BINARY_DIR}"
     RESULT_VARIABLE result
@@ -614,6 +697,11 @@ endif()
 set(OPENRBX_CURL_BINARY_DIR "${CMAKE_BINARY_DIR}/3rdparty/curl-build")
 set(OPENRBX_CURL_PREFIX "${OPENRBX_CURL_BINARY_DIR}/install")
 
+set(OPENRBX_CURL_CROSS_OPTIONS)
+if (ANDROID)
+  set(OPENRBX_CURL_CROSS_OPTIONS ${OPENRBX_ANDROID_CMAKE_ARGS} -DCMAKE_FIND_ROOT_PATH=${OPENRBX_OPENSSL_PREFIX})
+endif()
+
 if (NOT EXISTS "${OPENRBX_CURL_PREFIX}/lib/cmake/CURL/CURLConfig.cmake")
   message(STATUS "Building curl in ${OPENRBX_CURL_BINARY_DIR}")
   execute_process(
@@ -622,6 +710,7 @@ if (NOT EXISTS "${OPENRBX_CURL_PREFIX}/lib/cmake/CURL/CURLConfig.cmake")
             -DCMAKE_INSTALL_PREFIX=${OPENRBX_CURL_PREFIX}
             -DCMAKE_INSTALL_LIBDIR=lib
             -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            ${OPENRBX_CURL_CROSS_OPTIONS}
             -DCMAKE_DISABLE_FIND_PACKAGE_Perl=ON
             -DBUILD_SHARED_LIBS=OFF
             -DBUILD_STATIC_LIBS=ON
@@ -707,8 +796,12 @@ if (NOT WIN32)
 
   set(OPENRBX_OGREMAIN_LINUX_SOURCES ${OPENRBX_OGREMAIN_SOURCES})
   list(FILTER OPENRBX_OGREMAIN_LINUX_SOURCES EXCLUDE REGEX "/WIN32/")
+  if (ANDROID)
+    list(APPEND OPENRBX_OGREMAIN_LINUX_SOURCES "${OGRE}/OgreMain/src/Android/OgreConfigDialog.cpp")
+  else()
+    list(APPEND OPENRBX_OGREMAIN_LINUX_SOURCES "${OGRE}/OgreMain/src/GLX/OgreConfigDialog.cpp")
+  endif()
   list(APPEND OPENRBX_OGREMAIN_LINUX_SOURCES
-    "${OGRE}/OgreMain/src/GLX/OgreConfigDialog.cpp"
     "${OGRE}/OgreMain/src/GLX/OgreErrorDialog.cpp"
     "${OGRE}/OgreMain/src/GLX/OgreTimer.cpp"
     "${OGRE}/OgreMain/src/OgreSearchOps.cpp"
@@ -721,7 +814,10 @@ if (NOT WIN32)
     "${ZZIPLIB}"
   )
   target_compile_definitions(rgmain PRIVATE ${OPENRBX_OGRE_LINUX_DEFINITIONS} OGRE_NONCLIENT_BUILD FREEIMAGE_LIB)
-  target_link_libraries(rgmain PRIVATE zziplib zlib freetype freeimage X11::X11 X11::Xt X11::Xaw ${CMAKE_DL_LIBS})
+  target_link_libraries(rgmain PRIVATE zziplib zlib freetype freeimage ${CMAKE_DL_LIBS})
+  if (NOT ANDROID)
+    target_link_libraries(rgmain PRIVATE X11::X11 X11::Xt X11::Xaw)
+  endif()
 
   add_library(rgpar SHARED ${OPENRBX_PARTICLEFX_SOURCES})
   target_include_directories(rgpar PRIVATE
@@ -730,6 +826,17 @@ if (NOT WIN32)
   )
   target_compile_definitions(rgpar PRIVATE ${OPENRBX_OGRE_LINUX_DEFINITIONS})
   target_link_libraries(rgpar PRIVATE rgmain)
+
+  if (ANDROID)
+    # The Ogre GL render system needs GLX. Android runs the G3D renderer only.
+    set_target_properties(rgmain rgpar PROPERTIES
+      PREFIX "lib"
+      CXX_STANDARD 14
+      LIBRARY_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    )
+    target_link_options(rgmain PRIVATE "LINKER:--exclude-libs,ALL")
+    return()
+  endif()
 
   set(OPENRBX_GL_LINUX_SOURCES ${OPENRBX_GL_SOURCES})
   list(FILTER OPENRBX_GL_LINUX_SOURCES EXCLUDE REGEX "/OgreWin32|/win32/")

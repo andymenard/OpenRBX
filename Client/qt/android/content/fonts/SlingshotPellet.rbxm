@@ -1,0 +1,10 @@
+<roblox version="4"><Item class="Part"><Properties><string name="Name">SlingshotPellet</string><int name="BrickColor">199</int><token name="shape">0</token><Vector3 name="size"><X>1</X><Y>1</Y><Z>1</Z></Vector3><bool name="Anchored">false</bool><bool name="CanCollide">true</bool><token name="TopSurface">0</token><token name="BottomSurface">0</token></Properties><Item class="Script"><Properties><string name="Name">Projectile</string><string name="Source">local pellet = script.Parent
+game:GetService("Debris"):AddItem(pellet, 5)
+local hitOnce = false
+pellet.Touched:connect(function(hit)
+    if hitOnce or hit == pellet or hit.Name == "SlingshotPellet" then return end
+    hitOnce = true
+    local humanoid = hit.Parent and hit.Parent:findFirstChild("Humanoid")
+    if humanoid then humanoid:TakeDamage(15) end
+    pellet:Remove()
+end)</string></Properties></Item></Item></roblox>

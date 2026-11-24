@@ -37,6 +37,38 @@
 #include <QProcess>
 #include <QStandardPaths>
 
+#ifdef __ANDROID__
+#include "AndroidAssets.h"
+
+// Queue the command outside GUI input dispatch, just as ExitCommand does.
+class AndroidPlayCommand : public RBX::Verb
+{
+public:
+	AndroidPlayCommand(CRobloxDoc* document) : RBX::Verb(document->dataModel().get(), "PlaySolo"), m_document(document)
+	{
+	}
+
+	bool isEnabled() const override
+	{
+		RBX::DataModel::Lock lock(m_document->dataModel());
+		return !RBX::Network::Players::findLocalPlayer(m_document->dataModel().get());
+	}
+
+	void doIt(RBX::IDataState*) override
+	{
+		if (!m_document->views().empty()) {
+			View* view = m_document->views().front();
+			QMetaObject::invokeMethod(
+				view, [view]() { routeCommand({view, view->document()}, ID_TEST_SOLO); }, Qt::QueuedConnection
+			);
+		}
+	}
+
+private:
+	CRobloxDoc* m_document;
+};
+#endif
+
 #ifdef _WIN32
 #include <shlobj.h>
 #include <windows.h>
@@ -185,7 +217,19 @@ static void launchClient(const QString& file, const QString& arguments)
 void CRobloxDoc::testSolo()
 {
 	try {
+#ifdef __ANDROID__
+		RBX::DataModel::Lock lock(dataModel());
+		if (!RBX::Network::Players::findLocalPlayer(dataModel().get())) {
+			if (!executeScriptFile(AndroidAssets::dataDirectory() + "/places/solo.lua")) {
+				throw std::runtime_error("Unable to start solo play");
+			}
+		}
+		else {
+			dataModel()->create<RBX::RunService>()->run();
+		}
+#else
 		launchClient(saveTestCopy(this, "Visit"), " -script " + CRobloxApp::baseUrl() + "/game/visit.ashx");
+#endif
 	}
 	catch (std::exception& e) {
 		SystemMessageBox::warning(theApp.mainFrame(), Resources::string(appTitleStringId), e.what());
@@ -400,6 +444,9 @@ void CRobloxDoc::createWorkspace()
 
 	m_ownedVerbs.push_back(new ReportAbuseVerb(dataModel.get(), this));
 	m_ownedVerbs.push_back(new ExitCommand(dataModel.get(), this));
+#ifdef __ANDROID__
+	m_ownedVerbs.push_back(new AndroidPlayCommand(this));
+#endif
 	m_ownedVerbs.push_back(new RBX::FixedCameraCommand(m_workspace->workspace()));
 	m_ownedVerbs.push_back(new RBX::CameraPanLeftCommand(m_workspace->workspace()));
 	m_ownedVerbs.push_back(new RBX::CameraPanRightCommand(m_workspace->workspace()));

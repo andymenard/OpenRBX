@@ -13,11 +13,15 @@ class AdornG3D : public Adorn
 private:
 	G3D::RenderDevice* renderDevice;
 	G3D::TextureManager textureManager;
+	// Render-device pixels per GUI unit. The 3D scene renders at the device's full resolution while
+	// the 2D GUI and input stay in the widget units the client lays them out in.
+	float uiScale = 1.0f;
 
 public:
 	AdornG3D(G3D::RenderDevice* renderDevice) : renderDevice(renderDevice) {}
 
 	G3D::RenderDevice* getRenderDevice() { return renderDevice; }
+	void setUiScale(float scale) { uiScale = scale; }
 
 	G3D::ReferenceCountedPointer<TextureProxyBase> createTextureProxy(const std::string& filename) override;
 

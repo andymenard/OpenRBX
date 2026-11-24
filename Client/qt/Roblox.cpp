@@ -53,6 +53,10 @@
 #include <QUrl>
 #include <QXmlStreamReader>
 
+#ifdef __ANDROID__
+#include "AndroidAssets.h"
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -528,6 +532,13 @@ bool CRobloxApp::showMainFrame(bool gameLayout)
 	else {
 		m_mainFrame->leaveGameLayout();
 	}
+#ifdef __ANDROID__
+	// The saved full screen setting was applied while the window was built; the layout chosen above
+	// replaced it, so apply it again.
+	if (m_mainFrame->isFullScreenMode()) {
+		m_mainFrame->setFullScreen(true);
+	}
+#endif
 
 	m_mainFrame->setAcceptDrops(true);
 	m_mainFrame->restorePlacement(true);
@@ -683,7 +694,15 @@ void CRobloxApp::loadSettings()
 {
 	loadRecentFileList(recentFileListSize);
 
+#ifdef __ANDROID__
+	AndroidAssets::install();
+	if (!AndroidAssets::hasContent() && !AndroidAssets::requestContent()) {
+		std::exit(0);
+	}
+	QString directory = QString::fromStdString(AndroidAssets::dataDirectory());
+#else
 	QString directory = QCoreApplication::applicationDirPath();
+#endif
 	QFile file(directory + "/AppSettings.xml");
 	QString contentFolder;
 #ifdef _WIN32
@@ -840,6 +859,16 @@ bool CRobloxApp::initInstance(int argc, char** argv)
 #endif
 
 		CRobloxCommandLineInfo commandLine(argc, argv);
+#ifdef __ANDROID__
+		// Started from the launcher: there is no website to pick a place, so play the bundled one.
+		if (commandLine.shellCommand == CRobloxCommandLineInfo::FileNew && commandLine.fileName.isEmpty() &&
+			commandLine.scripts.empty()) {
+			QString places = QString::fromStdString(AndroidAssets::dataDirectory()) + "/places/";
+			commandLine.shellCommand = CRobloxCommandLineInfo::FileOpen;
+			commandLine.fileName = places + "obby.rbxl";
+			commandLine.scripts.push_back((places + "solo.lua").toStdString());
+		}
+#endif
 		if (commandLine.shellCommand == CRobloxCommandLineInfo::AppUnregister ||
 			commandLine.shellCommand == CRobloxCommandLineInfo::AppRegister) {
 			return false;
@@ -924,13 +953,21 @@ int CRobloxApp::run(int argc, char** argv)
 #ifdef _WIN32
 	qputenv("QT_USE_SYSTEM_LINE_METRICS", "1");
 	static char platformName[] = "windows:fontengine=gdi";
-#else
+#elif !defined(__ANDROID__)
 	static char platformName[] = "xcb";
 #endif
-	static char platformOption[] = "-platform";
 	static std::vector<char*> arguments(argv, argv + argc);
+#ifdef __ANDROID__
+	// Each 3D view draws into a child window. Qt gives a child of the only top-level window an Android
+	// SurfaceView, which is composited behind the activity's window; a TextureView stacks normally.
+	qputenv("QT_ANDROID_SURFACE_CONTAINER_TYPE", "1");
+#endif
+#ifndef __ANDROID__
+	// Android has a single platform plugin, which Qt selects itself.
+	static char platformOption[] = "-platform";
 	arguments.push_back(platformOption);
 	arguments.push_back(platformName);
+#endif
 	static int argumentCount = static_cast<int>(arguments.size());
 	m_application.reset(new QApplication(argumentCount, arguments.data()));
 	QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Light);
@@ -951,6 +988,18 @@ int CRobloxApp::run(int argc, char** argv)
 	m_frameTimer->setSingleShot(true);
 	m_frameTimer->setTimerType(Qt::PreciseTimer);
 	QObject::connect(m_frameTimer.get(), &QTimer::timeout, m_frameTimer.get(), [this]() { renderFrame(); });
+#ifdef __ANDROID__
+	QObject::connect(
+		m_application.get(),
+		&QGuiApplication::applicationStateChanged,
+		m_frameTimer.get(),
+		[this](Qt::ApplicationState state) {
+			if (state == Qt::ApplicationActive) {
+				scheduleFrame();
+			}
+		}
+	);
+#endif
 	QObject::connect(
 		QAbstractEventDispatcher::instance(), &QAbstractEventDispatcher::aboutToBlock, m_application.get(), [this]() {
 			idle();

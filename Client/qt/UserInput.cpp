@@ -372,6 +372,21 @@ void UserInput::mouseWheel(bool forward, const G3D::Vector2& position)
 	sendMouseEvent(forward ? RBX::UIEvent::MOUSE_WHEEL_FORWARD : RBX::UIEvent::MOUSE_WHEEL_BACKWARD, position);
 }
 
+#ifdef __ANDROID__
+void UserInput::touchTap(const G3D::Vector2& position)
+{
+	RBX::DataModel::Lock modelLock(m_dataModel);
+	std::scoped_lock inputLock(m_mutex);
+	acquireMouse(position);
+	m_cursorOffset = position - m_viewportRect.center();
+	// Touch taps are absolute, even while camera input has captured the mouse.
+	// Hover first so the GUI establishes focus before receiving the click.
+	sendMouseEvent(RBX::UIEvent::MOUSE_MOVE, position);
+	sendMouseEvent(RBX::UIEvent::MOUSE_LEFT_BUTTON_DOWN, position);
+	sendMouseEvent(RBX::UIEvent::MOUSE_LEFT_BUTTON_UP, position);
+}
+#endif
+
 #ifdef _WIN32
 void UserInput::processMessage(unsigned message, int wParam, std::intptr_t lParam)
 {

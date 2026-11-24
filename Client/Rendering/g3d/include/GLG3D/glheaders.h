@@ -27,7 +27,11 @@
     #include "../GL/wglext.h"
 #endif
 
-#if defined(G3D_EGL)
+#if defined(G3D_GL4ES)
+// OpenGL calls go to gl4es, which translates them to OpenGL ES on the current EGL context.
+#include <EGL/egl.h>
+extern "C" void* gl4es_GetProcAddress(const char* name);
+#elif defined(G3D_EGL)
     #include <EGL/egl.h>
 #elif defined(G3D_LINUX)
     typedef struct __GLXcontextRec *GLXContext;

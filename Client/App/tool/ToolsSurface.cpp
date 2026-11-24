@@ -15,6 +15,7 @@
 #include "util/Sound.h"
 #include "util/SoundWorld.h"
 #include "util/Units.h"
+#include "util/standardout.h"
 #include "v8datamodel/Commands.h"
 #include "v8datamodel/DataModel.h"
 #include "v8datamodel/Explosion.h"
@@ -387,14 +388,14 @@ std::shared_ptr<PartInstance> SlingshotTool::createProjectile()
 {
 	std::vector<std::shared_ptr<Instance>> instances;
 	ContentProvider::singleton().load(ContentId::fromAssets("Fonts\\SlingshotPellet.rbxm"), instances);
-	return std::static_pointer_cast<PartInstance>(instances.front());
+	return instances.empty() ? nullptr : std::dynamic_pointer_cast<PartInstance>(instances.front());
 }
 
 std::shared_ptr<PartInstance> RocketTool::createProjectile()
 {
 	std::vector<std::shared_ptr<Instance>> instances;
 	ContentProvider::singleton().load(ContentId::fromAssets("Fonts\\Rocket.rbxm"), instances);
-	return std::static_pointer_cast<PartInstance>(instances.front());
+	return instances.empty() ? nullptr : std::dynamic_pointer_cast<PartInstance>(instances.front());
 }
 
 void ShootTool::fire(const UIEvent& uiEvent)
@@ -403,12 +404,23 @@ void ShootTool::fire(const UIEvent& uiEvent)
 	PartInstance* head = Humanoid::getLocalHeadFromContext(workspace);
 	if (head) {
 		if (!m_projectile) {
-			m_projectile = createProjectile();
+			try {
+				m_projectile = createProjectile();
+			}
+			catch (const std::exception& error) {
+				StandardOut::singleton()->print(MESSAGE_ERROR, error);
+				return;
+			}
+			if (!m_projectile) {
+				StandardOut::singleton()->print(MESSAGE_ERROR, "Projectile asset does not contain a Part");
+				return;
+			}
 		}
 
 		std::shared_ptr<PartInstance> projectile = std::static_pointer_cast<PartInstance>(m_projectile->clone());
-		projectile->setParent(workspace);
 		projectile->getPrimitive()->setPV(computeLaunch(uiEvent, head->getCoordinateFrame()));
+		// Parenting starts the projectile script, which needs the launch position and direction.
+		projectile->setParent(workspace);
 		ServiceProvider::create<Soundscape::SoundService>(workspace)->playSound(fireSound());
 	}
 }

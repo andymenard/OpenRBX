@@ -1,3 +1,9 @@
+#ifdef __ANDROID__
+// Qt's Android headers declare a JNI type named HashMap, which Ogre defines as a macro, so Qt has
+// to be seen first.
+#include <QCoreApplication>
+#endif
+
 // clang-format off
 #include <OgreAnimation.h>
 #include <OgreCamera.h>
@@ -8,12 +14,11 @@
 #include <OgreTimer.h>
 // clang-format on
 
-#include "RobloxWnd.h"
-
 #include "LogManager.h"
 #include "NativeInput.h"
 #include "RenderSettings.h"
 #include "Roblox.h"
+#include "RobloxWnd.h"
 #include "SystemMessageBox.h"
 #include "View.h"
 #include "Workspace.h"
@@ -50,6 +55,7 @@
 #include <GLG3D/VARArea.h>
 #include <QCoreApplication>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <set>
 #include <stdexcept>
@@ -58,15 +64,26 @@
 #ifdef _WIN32
 #include <GLG3D/Win32Window.h>
 #else
+#ifdef __ANDROID__
+#include "QtGLWindow.h"
+#else
 #include "GlxWindow.h"
+#endif
 #include "InputDevice.h"
 
 #include <QGuiApplication>
 #include <QMouseEvent>
 #include <QResizeEvent>
+#include <QTouchEvent>
+#ifdef __ANDROID__
+#include "TouchControls.h"
+#include "appdraw/AdornG3D.h"
+#endif
 #include <QTimer>
 #include <QWheelEvent>
+#ifndef __ANDROID__
 #include <qguiapplication_platform.h>
+#endif
 #endif
 
 #ifdef _WIN32
@@ -74,6 +91,14 @@ static const CRenderSettings::GraphicsMode rbxGfxGraphicsMode = CRenderSettings:
 #else
 static const CRenderSettings::GraphicsMode rbxGfxGraphicsMode = CRenderSettings::c_graphicsModeOpenGL;
 #endif
+
+static void makeGLCurrent(G3D::GWindow* window)
+{
+#ifdef __ANDROID__
+	static_cast<QtGLWindow*>(window)->bind();
+#endif
+	window->makeCurrent();
+}
 
 static std::mutex throttleMutex;
 
@@ -129,7 +154,7 @@ void CRobloxWnd::resizeRbxGfx(int cx, int cy)
 	if (m_visualEngine) {
 		Ogre::RenderWindow* window = m_visualEngine->m_renderWindow;
 		Ogre::Camera* camera = m_visualEngine->m_camera;
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__ANDROID__)
 		Display* display = nullptr;
 		unsigned long nativeWindow = 0;
 		window->getCustomAttribute("DISPLAY", &display);
@@ -156,7 +181,7 @@ void CRobloxWnd::createRbxGfxView()
 void CRobloxWnd::buildGui()
 {
 	if (m_glWindow) {
-		m_glWindow->makeCurrent();
+		makeGLCurrent(m_glWindow);
 	}
 	m_dataModel->buildGui(m_adorn.get());
 }
@@ -259,7 +284,7 @@ bool CRobloxWnd::nativeEvent(const QByteArray& eventType, void* message, qintptr
 
 	if (m_dataModel) {
 		if (m_glWindow) {
-			m_glWindow->makeCurrent();
+			makeGLCurrent(m_glWindow);
 		}
 		if (m_userInput) {
 			m_userInput->processMessage(msg->message, static_cast<int>(msg->wParam), msg->lParam);
@@ -272,7 +297,14 @@ bool CRobloxWnd::nativeEvent(const QByteArray& eventType, void* message, qintptr
 #else
 void CRobloxWnd::paintEvent(QPaintEvent* event)
 {
+#ifdef __ANDROID__
+	// Android paints widgets while synchronously recreating Java surfaces after
+	// the file picker returns. Binding another EGL window here can deadlock Qt.
+	// The child TextureView is rendered separately by renderIdle().
+	event->accept();
+#else
 	OnPaint();
+#endif
 }
 
 void CRobloxWnd::resizeEvent(QResizeEvent* event)
@@ -306,7 +338,7 @@ void CRobloxWnd::processMouse(RBX::UIEvent::EventType eventType, QMouseEvent* ev
 	}
 	if (m_dataModel) {
 		if (m_glWindow) {
-			m_glWindow->makeCurrent();
+			makeGLCurrent(m_glWindow);
 		}
 		if (m_userInput && eventType != RBX::UIEvent::NO_EVENT) {
 			QPointF position = event->position();
@@ -366,7 +398,7 @@ void CRobloxWnd::wheelEvent(QWheelEvent* event)
 	}
 	if (m_dataModel) {
 		if (m_glWindow) {
-			m_glWindow->makeCurrent();
+			makeGLCurrent(m_glWindow);
 		}
 		if (m_userInput) {
 			QPointF position = event->position();
@@ -376,6 +408,180 @@ void CRobloxWnd::wheelEvent(QWheelEvent* event)
 	}
 }
 
+#ifdef __ANDROID__
+// Finger travel, in widget units, before a touch counts as a drag rather than a tap.
+static constexpr qreal touchDragThreshold = 10;
+// Change in finger spacing that makes one zoom step.
+static constexpr qreal pinchStep = 1.15;
+
+bool CRobloxWnd::event(QEvent* event)
+{
+	switch (event->type()) {
+	case QEvent::TouchBegin:
+	case QEvent::TouchUpdate:
+	case QEvent::TouchEnd:
+	case QEvent::TouchCancel:
+		if (m_userInput) {
+			m_userInput->setCursorHidden(true);
+		}
+		handleTouch(static_cast<QTouchEvent*>(event));
+		event->accept();
+		return true;
+	case QEvent::MouseMove:
+	case QEvent::MouseButtonPress:
+		// A real mouse (not one of the events made from touches above) brings the cursor back.
+		if (m_userInput && !m_sendingTouchMouse &&
+			static_cast<QMouseEvent*>(event)->source() == Qt::MouseEventNotSynthesized) {
+			m_userInput->setCursorHidden(false);
+		}
+		return QWidget::event(event);
+	default:
+		return QWidget::event(event);
+	}
+}
+
+void CRobloxWnd::sendMouse(QEvent::Type type, QPointF position, Qt::MouseButton button)
+{
+	Qt::MouseButtons buttons = type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::MouseButtons(button);
+	QMouseEvent mouse(type, position, mapToGlobal(position), button, buttons, Qt::NoModifier);
+	// Sent, not called directly: the input device reads pointer motion through an application filter.
+	m_sendingTouchMouse = true;
+	QCoreApplication::sendEvent(this, &mouse);
+	m_sendingTouchMouse = false;
+}
+
+void CRobloxWnd::endTouchDrag()
+{
+	if (m_touchDragging) {
+		m_touchDragging = false;
+		sendMouse(QEvent::MouseButtonRelease, m_touchLast, Qt::RightButton);
+	}
+}
+
+void CRobloxWnd::handleTouch(QTouchEvent* event)
+{
+	if (event->type() == QEvent::TouchCancel) {
+		endTouchDrag();
+		m_touchId = -1;
+		m_pinching = false;
+		if (m_touchControls) {
+			m_touchControls->releaseAll();
+		}
+		return;
+	}
+
+	// The on-screen controls take their touches first; the rest move the camera or click.
+	std::vector<const QEventPoint*> points;
+	for (const QEventPoint& point : event->points()) {
+		if (m_touchControls && m_userInput) {
+			if (point.state() == QEventPoint::Pressed && point.id() != m_touchId &&
+				m_touchControls->press(point.id(), point.position(), QSizeF(size()))) {
+				continue;
+			}
+			if (m_touchControls->owns(point.id())) {
+				if (point.state() == QEventPoint::Released) {
+					m_touchControls->release(point.id());
+				}
+				else {
+					m_touchControls->move(point.id(), point.position());
+				}
+				continue;
+			}
+		}
+		points.push_back(&point);
+	}
+
+	std::vector<const QEventPoint*> down;
+	for (const QEventPoint* point : points) {
+		if (point->state() != QEventPoint::Released) {
+			down.push_back(point);
+		}
+	}
+
+	if (down.size() >= 2) {
+		// A second finger turns the gesture into a pinch; the first finger no longer taps or turns.
+		endTouchDrag();
+		m_touchId = -1;
+		QPointF span = down[0]->position() - down[1]->position();
+		qreal distance = std::hypot(span.x(), span.y());
+		if (!m_pinching || m_pinchDistance <= 0) {
+			m_pinching = true;
+			m_pinchDistance = distance;
+			return;
+		}
+		QPointF center = (down[0]->position() + down[1]->position()) / 2;
+		while (distance > m_pinchDistance * pinchStep || distance < m_pinchDistance / pinchStep) {
+			bool in = distance > m_pinchDistance;
+			m_pinchDistance = in ? m_pinchDistance * pinchStep : m_pinchDistance / pinchStep;
+			QWheelEvent wheel(
+				center,
+				mapToGlobal(center),
+				QPoint(),
+				QPoint(0, in ? 120 : -120),
+				Qt::NoButton,
+				Qt::NoModifier,
+				Qt::NoScrollPhase,
+				false
+			);
+			QCoreApplication::sendEvent(this, &wheel);
+		}
+		return;
+	}
+
+	for (const QEventPoint* touch : points) {
+		const QEventPoint& point = *touch;
+		QPointF position = point.position();
+		switch (point.state()) {
+		case QEventPoint::Pressed:
+			if (m_touchId < 0 && !m_pinching) {
+				m_touchId = point.id();
+				m_touchStart = m_touchLast = position;
+				m_touchDragging = false;
+				setFocus();
+				// A new finger position is not relative mouse motion. The tap sends
+				// absolute hover/click events on release; a drag establishes its own origin.
+			}
+			break;
+		case QEventPoint::Updated:
+		case QEventPoint::Stationary:
+			if (point.id() != m_touchId) {
+				break;
+			}
+			if (!m_touchDragging) {
+				QPointF moved = position - m_touchStart;
+				if (std::hypot(moved.x(), moved.y()) < touchDragThreshold) {
+					break;
+				}
+				m_touchDragging = true;
+				sendMouse(QEvent::MouseButtonPress, m_touchStart, Qt::RightButton);
+			}
+			m_touchLast = position;
+			sendMouse(QEvent::MouseMove, position, Qt::NoButton);
+			break;
+		case QEventPoint::Released:
+			if (point.id() == m_touchId) {
+				if (m_touchDragging) {
+					m_touchLast = position;
+					endTouchDrag();
+				}
+				else if (m_userInput) {
+					m_userInput->touchTap(G3D::Vector2(m_touchStart.x(), m_touchStart.y()));
+				}
+				m_touchId = -1;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+
+	if (down.empty()) {
+		m_pinching = false;
+		m_touchId = -1;
+	}
+}
+#endif
+
 void CRobloxWnd::keyPressEvent(QKeyEvent* event)
 {
 	if (m_userInput) {
@@ -384,6 +590,7 @@ void CRobloxWnd::keyPressEvent(QKeyEvent* event)
 	event->ignore();
 }
 
+#ifndef __ANDROID__
 static Display* x11Display()
 {
 	if (QNativeInterface::QX11Application* application = qApp->nativeInterface<QNativeInterface::QX11Application>()) {
@@ -391,6 +598,7 @@ static Display* x11Display()
 	}
 	throw std::runtime_error("OpenGL requires an X11 display");
 }
+#endif
 #endif
 
 void CRobloxWnd::setActive(bool active)
@@ -428,7 +636,16 @@ void CRobloxWnd::AdjustThrottle(double frameRate)
 void CRobloxWnd::createRenderDevice(G3D::GWindow* window)
 {
 	m_glWindow = window;
-	window->makeCurrent();
+	makeGLCurrent(window);
+#ifdef __ANDROID__
+	// Android views share a context. Errors from the preceding view must not be
+	// mistaken for failures in the new render device's initialization.
+	while (GLenum error = glGetError()) {
+		RBX::StandardOut::singleton()->print(
+			RBX::MESSAGE_WARNING, "OpenGL error before creating render device: 0x%04x", static_cast<unsigned>(error)
+		);
+	}
+#endif
 
 	if (G3D::GLCaps::renderer() == "GDI Generic") {
 		throw std::runtime_error(
@@ -450,15 +667,15 @@ void CRobloxWnd::createRenderDevice(G3D::GWindow* window)
 		m_renderDevice->enableAlphaWrite();
 	}
 
-	if (glGetError() != GL_NO_ERROR) {
-		throw std::runtime_error("GL error creating RenderDevice");
+	if (GLenum error = glGetError()) {
+		throw std::runtime_error(G3D::format("GL error 0x%04x creating RenderDevice", static_cast<unsigned>(error)));
 	}
 }
 
 void CRobloxWnd::destroyRenderDevice()
 {
 	if (m_glWindow) {
-		m_glWindow->makeCurrent();
+		makeGLCurrent(m_glWindow);
 	}
 
 	if (m_renderDevice.get()) {
@@ -509,20 +726,34 @@ CRobloxWnd::CRobloxWnd(bool alpha, QWidget* parent)
 {
 	m_fallbackCount = 0;
 	m_graphicsMode = CRenderSettings::singleton().getLatchedGraphicsMode();
+#ifdef __ANDROID__
+	// The Ogre GL render system needs GLX, so Android always draws through G3D.
+	if (m_graphicsMode != CRenderSettings::c_graphicsModeNoGraphics) {
+		m_graphicsMode = CRenderSettings::c_graphicsModeOpenGLStable;
+	}
+#else
 	if (m_graphicsMode == CRenderSettings::c_graphicsModeAutomatic ||
 		m_graphicsMode == CRenderSettings::c_graphicsModeDirect3D) {
 		m_graphicsMode = rbxGfxGraphicsMode;
 	}
+#endif
 
 	setWindowFlag(Qt::MSWindowsOwnDC);
+#ifndef __ANDROID__
+	// On Android the view is an ordinary widget: Qt there only paints through the backing store, and
+	// the GL frame is shown by a child widget (see QtGLWindow).
 	setAttribute(Qt::WA_NativeWindow);
 	setAttribute(Qt::WA_PaintOnScreen);
+#endif
 	setAttribute(Qt::WA_NoSystemBackground);
 	setAttribute(Qt::WA_OpaquePaintEvent);
 	setFocusPolicy(Qt::StrongFocus);
 	setCursor(Qt::ArrowCursor);
 #ifndef _WIN32
 	setMouseTracking(true);
+#endif
+#ifdef __ANDROID__
+	setAttribute(Qt::WA_AcceptTouchEvents);
 #endif
 	resize(std::max(width(), 100), std::max(height(), 100));
 }
@@ -614,6 +845,11 @@ void CRobloxWnd::createRbxGfx(int cx, int cy)
 	Ogre::String windowHandle = Ogre::StringConverter::toString((unsigned long) hwnd);
 	int clientWidth = rect.right - rect.left;
 	int clientHeight = rect.bottom - rect.top;
+#elif defined(__ANDROID__)
+	throw std::runtime_error("RbxGfx is not available on Android");
+	Ogre::String windowHandle;
+	int clientWidth = width();
+	int clientHeight = height();
 #else
 	Display* display = x11Display();
 	Ogre::String windowHandle = Ogre::StringConverter::toString(reinterpret_cast<unsigned long>(display)) + ":" +
@@ -713,11 +949,17 @@ void CRobloxWnd::createG3D(int width, int height)
 #ifdef _WIN32
 		window = G3D::Win32Window::create(settings, dc);
 		ReleaseDC(hwnd, dc);
+#elif defined(__ANDROID__)
+		window = new QtGLWindow(settings, this);
 #else
 		window = new GlxWindow(settings, x11Display(), winId());
 #endif
 	}
 	catch (std::exception&) {
+#ifdef __ANDROID__
+		// No desktop renderer fallback is available if the Android context fails.
+		throw;
+#else
 #ifdef _WIN32
 		ReleaseDC(hwnd, dc);
 #endif
@@ -734,12 +976,18 @@ void CRobloxWnd::createG3D(int width, int height)
 			throw;
 		}
 		throw std::runtime_error("Graphics failed to initialize");
+#endif
 	}
 
 	try {
 		createRenderDevice(window);
 	}
 	catch (std::exception& e) {
+#ifdef __ANDROID__
+		// The Ogre renderer requires desktop GL. Preserve the actual G3D failure
+		// instead of hiding it behind an unsupported fallback renderer.
+		throw;
+#else
 		if (m_fallbackCount == 0 && CRenderSettings::singleton().getLatchedGraphicsMode() == 1) {
 			m_fallbackCount++;
 			RBX::StandardOut::singleton()->print(
@@ -751,6 +999,7 @@ void CRobloxWnd::createG3D(int width, int height)
 		else {
 			throw std::runtime_error("Graphics failed to initialize");
 		}
+#endif
 	}
 }
 
@@ -764,7 +1013,9 @@ bool CRobloxWnd::create()
 	int cy = rect.bottom - rect.top;
 	int cx = rect.right - rect.left;
 #else
+#ifndef __ANDROID__
 	winId();
+#endif
 	int cy = height();
 	int cx = width();
 #endif
@@ -815,14 +1066,22 @@ void CRobloxWnd::resizeG3D(int cx, int cy)
 					createRbxGfx(cx, cy);
 				}
 				if (m_glWindow) {
-					m_glWindow->makeCurrent();
+					makeGLCurrent(m_glWindow);
 				}
 			}
 			catch (std::exception&) {
 			}
 		}
 		else {
+#ifdef __ANDROID__
+			// Qt may have made its own context current since the last frame; the resize recreates the
+			// view's pbuffer and sets the viewport, both of which need the view's context.
+			makeGLCurrent(m_glWindow);
+#endif
 			m_renderDevice->notifyResize(cx, cy);
+#ifdef __ANDROID__
+			makeGLCurrent(m_glWindow);
+#endif
 			G3D::Rect2D viewport = G3D::Rect2D::xywh(0, 0, m_renderDevice->width(), m_renderDevice->height());
 			m_renderDevice->setViewport(viewport);
 		}
@@ -859,7 +1118,22 @@ void CRobloxWnd::renderG3D(bool draw2d)
 		m_dataModel->renderPass3dAdorn(m_adorn.get());
 		if (draw2d) {
 			m_renderDevice->push2D();
+#ifdef __ANDROID__
+			// The scene renders at the screen's full resolution; the GUI keeps its size in widget units.
+			float scale = static_cast<float>(devicePixelRatioF());
+			static_cast<RBX::AdornG3D*>(m_adorn.get())->setUiScale(scale);
+			m_renderDevice->setProjectionMatrix(
+				G3D::Matrix4::orthogonalProjection(
+					0, m_renderDevice->width() / scale, m_renderDevice->height() / scale, 0, -1, 1
+				)
+			);
+#endif
 			m_dataModel->renderPass2d(m_adorn.get(), this);
+#ifdef __ANDROID__
+			if (m_touchControls && m_userInput) {
+				m_touchControls->render(m_renderDevice.get(), QSizeF(size()));
+			}
+#endif
 			m_renderDevice->pop2D();
 		}
 	}
@@ -966,7 +1240,7 @@ bool CRobloxWnd::paintG3D()
 #else
 	if (m_glWindow && m_dataModel) {
 #endif
-		m_glWindow->makeCurrent();
+		makeGLCurrent(m_glWindow);
 		if (!m_renderDevice.get()) {
 #ifdef _WIN32
 			RECT rect;
@@ -1026,6 +1300,11 @@ void CRobloxWnd::OnPaint()
 
 bool CRobloxWnd::isIdleActive() const
 {
+#ifdef __ANDROID__
+	if (QGuiApplication::applicationState() != Qt::ApplicationActive) {
+		return false;
+	}
+#endif
 	return idleWindows.contains(const_cast<CRobloxWnd*>(this)) && m_dataModel && isVisible() &&
 		   !window()->isMinimized();
 }
@@ -1048,6 +1327,14 @@ bool CRobloxWnd::renderIdle(double& wait)
 		}
 
 		active = true;
+#ifdef __ANDROID__
+		// This timer supplies the initial and simulation frames too: QWidget paint
+		// callbacks deliberately do not draw into Android's TextureViews.
+		RBX::FrameInterpolator::setExtraFrame(RBX::getRealTime() < RBX::FrameInterpolator::getNextStepTime());
+		window->OnPaint();
+		RBX::FrameInterpolator::setExtraFrame(false);
+		rendered = true;
+#else
 		if (RBX::getRealTime() < RBX::FrameInterpolator::getNextStepTime()) {
 			RBX::FrameInterpolator::setExtraFrame(true);
 #ifdef _WIN32
@@ -1058,6 +1345,7 @@ bool CRobloxWnd::renderIdle(double& wait)
 			RBX::FrameInterpolator::setExtraFrame(false);
 			rendered = true;
 		}
+#endif
 	}
 
 	wait = 0.0;
@@ -1245,7 +1533,7 @@ void CRobloxWnd::setWorkspace(CWorkspace* workspace)
 				controllers->setHardwareDevice(nullptr);
 			}
 			if (m_glWindow) {
-				m_glWindow->makeCurrent();
+				makeGLCurrent(m_glWindow);
 			}
 			m_view.reset();
 			removeRunView(m_dataModel.get(), this);
@@ -1261,7 +1549,15 @@ void CRobloxWnd::setWorkspace(CWorkspace* workspace)
 		}
 
 		if (m_dataModel) {
+#ifdef __ANDROID__
+			// A native child window would get its own Android surface, which Qt does not paint, so the
+			// view stays non-native and is identified by its address (see NativeInputQt.cpp).
+			m_userInput.reset(new UserInput(reinterpret_cast<WId>(this), m_dataModel.get()));
+			// Touch is the usual input; a mouse brings the cursor back when it is used.
+			m_userInput->setCursorHidden(true);
+#else
 			m_userInput.reset(new UserInput(winId(), m_dataModel.get()));
+#endif
 
 			RBX::DataModel::Lock lock(m_dataModel);
 			CRenderSettings::singleton().updateQualityProfile(false);

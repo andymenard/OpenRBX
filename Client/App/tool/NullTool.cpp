@@ -30,6 +30,10 @@ void NewNullTool::onMouseIdle(const UIEvent& uiEvent)
 
 void NewNullTool::onMouseHover(const UIEvent& uiEvent)
 {
+#ifdef __ANDROID__
+	hasWaypoint = false;
+	return;
+#endif
 	if (getPartByLocalCharacter(uiEvent, waypoint) && characterCanReach(waypoint)) {
 		cursor = "ArrowCursor";
 		hasWaypoint = true;
@@ -42,6 +46,10 @@ void NewNullTool::onMouseHover(const UIEvent& uiEvent)
 
 MouseCommand* NewNullTool::onMouseDown(const UIEvent& uiEvent)
 {
+#ifdef __ANDROID__
+	// Touch screens move the character with the on-screen joystick; a tap must not walk it somewhere.
+	return this;
+#endif
 	G3D::Vector3 hitPoint;
 	PartInstance* part = getPartByLocalCharacter(uiEvent, hitPoint);
 	if (part && characterCanReach(hitPoint)) {
