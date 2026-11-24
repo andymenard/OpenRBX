@@ -894,6 +894,17 @@ if (WIN32)
 endif()
 add_dependencies(roblox runtime_files)
 if (ANDROID)
+  # Novetus distributes places as .rbxl.bz2; the NDK has no libbz2.
+  add_library(bzip2 STATIC
+    3rdparty/bzip2/blocksort.c
+    3rdparty/bzip2/bzlib.c
+    3rdparty/bzip2/compress.c
+    3rdparty/bzip2/crctable.c
+    3rdparty/bzip2/decompress.c
+    3rdparty/bzip2/huffman.c
+    3rdparty/bzip2/randtable.c
+  )
+  target_include_directories(bzip2 PUBLIC "${OPENRBX_3RDPARTY}/bzip2")
   target_include_directories(roblox PRIVATE "${PROJECT_SOURCE_DIR}/Client/qt/android")
   target_compile_definitions(roblox PRIVATE OPENRBX_GL4ES)
   string(REPLACE ";" "," OPENRBX_CLIENT_LINK_GROUP "${OPENRBX_CLIENT_ENGINE_LIBRARIES}")
@@ -902,6 +913,7 @@ if (ANDROID)
   target_link_libraries(roblox PRIVATE
     glg3d
     gl4es
+    bzip2
     Qt6::Widgets
     Qt6::PrintSupport
     scintilla

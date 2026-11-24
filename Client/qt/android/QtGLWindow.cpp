@@ -23,6 +23,37 @@
 static QOpenGLContext* glContext;
 // Bound while no view window can be drawn to yet (before it is first shown, or after it is hidden).
 static QOffscreenSurface* placeholder;
+static EGLSurface placeholderBuffer = EGL_NO_SURFACE;
+
+static void bindPlaceholderBuffer()
+{
+	// Qt uses EGL_KHR_surfaceless_context for QOffscreenSurface on Android. G3D's
+	// initialization clears the default framebuffer, so it needs a real pbuffer
+	// until the new view has been exposed and can supply its window surface.
+	EGLDisplay display = eglGetCurrentDisplay();
+	EGLContext context = eglGetCurrentContext();
+	if (placeholderBuffer == EGL_NO_SURFACE) {
+		EGLint configId = 0;
+		EGLConfig config;
+		EGLint count = 0;
+		if (!eglQueryContext(display, context, EGL_CONFIG_ID, &configId)) {
+			throw std::runtime_error("Unable to query the Android OpenGL context");
+		}
+		const EGLint configAttributes[] = {EGL_CONFIG_ID, configId, EGL_NONE};
+		if (!eglChooseConfig(display, configAttributes, &config, 1, &count) || count != 1) {
+			throw std::runtime_error("Unable to find the Android offscreen buffer configuration");
+		}
+		const EGLint bufferAttributes[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+		placeholderBuffer = eglCreatePbufferSurface(display, config, bufferAttributes);
+		if (placeholderBuffer == EGL_NO_SURFACE) {
+			throw std::runtime_error("Unable to create the Android offscreen buffer");
+		}
+	}
+	if (eglGetCurrentSurface(EGL_DRAW) != placeholderBuffer &&
+		!eglMakeCurrent(display, placeholderBuffer, placeholderBuffer, context)) {
+		throw std::runtime_error("Unable to bind the Android offscreen buffer");
+	}
+}
 
 // The child window a view draws into. Android delivers input to it rather than to the view widget
 // under it, so it passes every input event on to that widget, which keeps the client's usual mouse,
@@ -156,7 +187,17 @@ void QtGLWindow::bind() const
 {
 	QSurface* surface = m_window && m_window->isExposed() ? static_cast<QSurface*>(m_window) : placeholder;
 	if (QOpenGLContext::currentContext() != glContext || glContext->surface() != surface) {
-		glContext->makeCurrent(surface);
+		if (!glContext->makeCurrent(surface)) {
+			// Android may still be recreating the window after the document picker
+			// returns. Initialize/draw offscreen and retry its surface next frame.
+			surface = placeholder;
+			if (!glContext->makeCurrent(surface)) {
+				throw std::runtime_error("Unable to bind the Android OpenGL context");
+			}
+		}
+	}
+	if (surface == placeholder) {
+		bindPlaceholderBuffer();
 	}
 }
 

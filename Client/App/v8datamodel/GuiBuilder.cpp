@@ -29,6 +29,9 @@ std::shared_ptr<TopMenuBar> GuiBuilder::buildMenu()
 	std::shared_ptr<RelativePanel> menu = Creatable<Instance>::create<RelativePanel>(layout);
 	menu->setName("MainMenu");
 
+#ifdef __ANDROID__
+	menu->addGuiItem(Creatable<Instance>::create<MenuItem>(getVerb("PlaySolo"), "Play"));
+#endif
 	menu->addGuiItem(Creatable<Instance>::create<MenuItem>(getVerb("TogglePlayMode"), "Tools"));
 	menu->addGuiItem(Creatable<Instance>::create<MenuItem>(getVerb("ToggleToolbox"), "Insert"));
 	menu->addGuiItem(Creatable<Instance>::create<MenuItem>(getVerb("ToggleFullScreen"), "Fullscreen"));

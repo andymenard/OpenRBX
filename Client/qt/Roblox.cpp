@@ -985,6 +985,18 @@ int CRobloxApp::run(int argc, char** argv)
 	m_frameTimer->setSingleShot(true);
 	m_frameTimer->setTimerType(Qt::PreciseTimer);
 	QObject::connect(m_frameTimer.get(), &QTimer::timeout, m_frameTimer.get(), [this]() { renderFrame(); });
+#ifdef __ANDROID__
+	QObject::connect(
+		m_application.get(),
+		&QGuiApplication::applicationStateChanged,
+		m_frameTimer.get(),
+		[this](Qt::ApplicationState state) {
+			if (state == Qt::ApplicationActive) {
+				scheduleFrame();
+			}
+		}
+	);
+#endif
 	QObject::connect(
 		QAbstractEventDispatcher::instance(), &QAbstractEventDispatcher::aboutToBlock, m_application.get(), [this]() {
 			idle();

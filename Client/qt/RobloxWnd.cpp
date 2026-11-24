@@ -297,7 +297,14 @@ bool CRobloxWnd::nativeEvent(const QByteArray& eventType, void* message, qintptr
 #else
 void CRobloxWnd::paintEvent(QPaintEvent* event)
 {
+#ifdef __ANDROID__
+	// Android paints widgets while synchronously recreating Java surfaces after
+	// the file picker returns. Binding another EGL window here can deadlock Qt.
+	// The child TextureView is rendered separately by renderIdle().
+	event->accept();
+#else
 	OnPaint();
+#endif
 }
 
 void CRobloxWnd::resizeEvent(QResizeEvent* event)
@@ -531,7 +538,8 @@ void CRobloxWnd::handleTouch(QTouchEvent* event)
 				m_touchStart = m_touchLast = position;
 				m_touchDragging = false;
 				setFocus();
-				sendMouse(QEvent::MouseMove, position, Qt::NoButton);
+				// A new finger position is not relative mouse motion. The tap sends
+				// absolute hover/click events on release; a drag establishes its own origin.
 			}
 			break;
 		case QEventPoint::Updated:
@@ -628,7 +636,16 @@ void CRobloxWnd::AdjustThrottle(double frameRate)
 void CRobloxWnd::createRenderDevice(G3D::GWindow* window)
 {
 	m_glWindow = window;
-	window->makeCurrent();
+	makeGLCurrent(window);
+#ifdef __ANDROID__
+	// Android views share a context. Errors from the preceding view must not be
+	// mistaken for failures in the new render device's initialization.
+	while (GLenum error = glGetError()) {
+		RBX::StandardOut::singleton()->print(
+			RBX::MESSAGE_WARNING, "OpenGL error before creating render device: 0x%04x", static_cast<unsigned>(error)
+		);
+	}
+#endif
 
 	if (G3D::GLCaps::renderer() == "GDI Generic") {
 		throw std::runtime_error(
@@ -650,8 +667,8 @@ void CRobloxWnd::createRenderDevice(G3D::GWindow* window)
 		m_renderDevice->enableAlphaWrite();
 	}
 
-	if (glGetError() != GL_NO_ERROR) {
-		throw std::runtime_error("GL error creating RenderDevice");
+	if (GLenum error = glGetError()) {
+		throw std::runtime_error(G3D::format("GL error 0x%04x creating RenderDevice", static_cast<unsigned>(error)));
 	}
 }
 
@@ -939,6 +956,10 @@ void CRobloxWnd::createG3D(int width, int height)
 #endif
 	}
 	catch (std::exception&) {
+#ifdef __ANDROID__
+		// No desktop renderer fallback is available if the Android context fails.
+		throw;
+#else
 #ifdef _WIN32
 		ReleaseDC(hwnd, dc);
 #endif
@@ -955,12 +976,18 @@ void CRobloxWnd::createG3D(int width, int height)
 			throw;
 		}
 		throw std::runtime_error("Graphics failed to initialize");
+#endif
 	}
 
 	try {
 		createRenderDevice(window);
 	}
 	catch (std::exception& e) {
+#ifdef __ANDROID__
+		// The Ogre renderer requires desktop GL. Preserve the actual G3D failure
+		// instead of hiding it behind an unsupported fallback renderer.
+		throw;
+#else
 		if (m_fallbackCount == 0 && CRenderSettings::singleton().getLatchedGraphicsMode() == 1) {
 			m_fallbackCount++;
 			RBX::StandardOut::singleton()->print(
@@ -972,6 +999,7 @@ void CRobloxWnd::createG3D(int width, int height)
 		else {
 			throw std::runtime_error("Graphics failed to initialize");
 		}
+#endif
 	}
 }
 
@@ -1272,6 +1300,11 @@ void CRobloxWnd::OnPaint()
 
 bool CRobloxWnd::isIdleActive() const
 {
+#ifdef __ANDROID__
+	if (QGuiApplication::applicationState() != Qt::ApplicationActive) {
+		return false;
+	}
+#endif
 	return idleWindows.contains(const_cast<CRobloxWnd*>(this)) && m_dataModel && isVisible() &&
 		   !window()->isMinimized();
 }
@@ -1294,20 +1327,25 @@ bool CRobloxWnd::renderIdle(double& wait)
 		}
 
 		active = true;
+#ifdef __ANDROID__
+		// This timer supplies the initial and simulation frames too: QWidget paint
+		// callbacks deliberately do not draw into Android's TextureViews.
+		RBX::FrameInterpolator::setExtraFrame(RBX::getRealTime() < RBX::FrameInterpolator::getNextStepTime());
+		window->OnPaint();
+		RBX::FrameInterpolator::setExtraFrame(false);
+		rendered = true;
+#else
 		if (RBX::getRealTime() < RBX::FrameInterpolator::getNextStepTime()) {
 			RBX::FrameInterpolator::setExtraFrame(true);
 #ifdef _WIN32
 			RedrawWindow(reinterpret_cast<HWND>(window->winId()), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
-#elif defined(__ANDROID__)
-			// Qt on Android does not deliver paint events to paint-on-screen widgets; the GL window
-			// is drawn directly.
-			window->OnPaint();
 #else
 			window->repaint();
 #endif
 			RBX::FrameInterpolator::setExtraFrame(false);
 			rendered = true;
 		}
+#endif
 	}
 
 	wait = 0.0;

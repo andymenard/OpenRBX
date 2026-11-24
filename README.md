@@ -124,6 +124,10 @@ optional; without it, copy the content to `files/.local/share/Roblox/content` in
 directory. Web pages are shown as static HTML, without scripts.
 
 The launcher opens an original obstacle course and starts solo play with automatic respawning.
+Use File > Open to choose a compatible legacy XML `.rbxl` place, or a bzip2-compressed `.rbxl.bz2`
+as distributed by Novetus, from Android storage. Selected documents are copied (and decompressed)
+into app storage so Recent Files can reopen them. Tap Play in the game menu to
+spawn a local character and run the open place, including automatic respawning after death.
 Use the floating joystick on the left to move, the jump button on the right, drag on the right
 to turn the camera, and pinch to zoom. Tap a tool at the bottom right to select it, then tap
 the scene to use it. The Fullscreen menu item toggles the editor panels. Rocket and slingshot
@@ -132,8 +136,10 @@ the remaining game content must be supplied separately and is not included in th
 
 The experimental Android port was tested on an Android 16 ARM64 device with a Mali-G615 GPU.
 Device checks covered rendering, touch tool selection, rocket and slingshot launch, rocket
-impact explosions, and projectile cleanup. Other devices may need additional compatibility work.
+impact explosions, projectile cleanup, importing places through Android's file picker, switching
+maps, and starting solo play with the Play button. Other devices may need additional compatibility work.
 
+The vendored bzip2 1.0.8 library sources (`3rdparty/bzip2`) retain their BSD-style license.
 The vendored gl4es source retains its MIT license. It includes a local fix that synchronizes
 fixed-function texture generation state when restoring attributes. The Android port and the
 local gl4es fix were developed with AI assistance from Claude and Codex.
