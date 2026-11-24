@@ -696,6 +696,9 @@ void CRobloxApp::loadSettings()
 
 #ifdef __ANDROID__
 	AndroidAssets::install();
+	if (!AndroidAssets::hasContent() && !AndroidAssets::requestContent()) {
+		std::exit(0);
+	}
 	QString directory = QString::fromStdString(AndroidAssets::dataDirectory());
 #else
 	QString directory = QCoreApplication::applicationDirPath();

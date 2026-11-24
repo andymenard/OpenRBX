@@ -120,8 +120,10 @@ adb install -r android-build/roblox-debug.apk
 Android has no
 desktop OpenGL, so the client draws through [gl4es](https://github.com/ptitSeb/gl4es), which
 translates it to OpenGL ES 2.0, and always uses the G3D renderer. `OPENRBX_ANDROID_CONTENT_DIR` is
-optional; without it, copy the content to `files/.local/share/Roblox/content` in the app's data
-directory. Web pages are shown as static HTML, without scripts.
+optional and should stay unset for APKs you distribute. Without bundled content, the app asks on
+first launch for a client content folder on the device (for example `data/clients/2007E/content`
+from Novetus, or the folder containing it) and copies it into its data directory. Web pages are
+shown as static HTML, without scripts.
 
 The launcher opens an original obstacle course and starts solo play with automatic respawning.
 Use File > Open to choose a compatible legacy XML `.rbxl` place, or a bzip2-compressed `.rbxl.bz2`
