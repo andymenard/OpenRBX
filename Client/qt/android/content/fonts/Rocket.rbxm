@@ -1,0 +1,23 @@
+<roblox version="4"><Item class="Part"><Properties><string name="Name">Rocket</string><int name="BrickColor">21</int><token name="shape">1</token><Vector3 name="size"><X>1</X><Y>1</Y><Z>3</Z></Vector3><bool name="Anchored">false</bool><bool name="CanCollide">true</bool><token name="TopSurface">0</token><token name="BottomSurface">0</token></Properties><Item class="Script"><Properties><string name="Name">Projectile</string><string name="Source">local rocket = script.Parent
+local debris = game:GetService("Debris")
+debris:AddItem(rocket, 8)
+
+local motor = Instance.new("BodyVelocity")
+motor.maxForce = Vector3.new(100000, 100000, 100000)
+motor.P = 10000
+motor.velocity = rocket.CFrame.lookVector * 85
+motor.Parent = rocket
+rocket.Velocity = motor.velocity
+
+local exploded = false
+rocket.Touched:connect(function(hit)
+    if exploded or hit == rocket or hit.Name == "Rocket" then return end
+    exploded = true
+    local blast = Instance.new("Explosion")
+    blast.Position = rocket.Position
+    blast.BlastRadius = 8
+    blast.BlastPressure = 500000
+    blast.Parent = game.Workspace
+    debris:AddItem(blast, 2)
+    rocket:Remove()
+end)</string></Properties></Item></Item></roblox>

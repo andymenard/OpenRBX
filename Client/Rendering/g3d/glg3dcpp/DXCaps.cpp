@@ -154,7 +154,7 @@ uint64 DXCaps::videoMemorySize() {
 
 } // namespace G3D
 
-#elif defined(G3D_LINUX) && !defined(G3D_EGL)
+#elif defined(G3D_LINUX) && !defined(G3D_EGL) && !defined(G3D_GL4ES)
 #include "GL/glx.h"
 #include <string.h>
 
@@ -240,6 +240,17 @@ uint64 DXCaps::videoMemorySize() {
     XCloseDisplay(display);
     return totalVidSize;
 }
+
+} // namespace G3D
+
+#elif defined(G3D_GL4ES)
+
+namespace G3D {
+
+// OpenGL ES has no portable video memory query; 0 means unknown, as on the other paths.
+uint32 DXCaps::version() { return 0; }
+
+uint64 DXCaps::videoMemorySize() { return 0; }
 
 } // namespace G3D
 

@@ -12,12 +12,18 @@
 
 #include <GLG3D/GWindow.h>
 #include <GLG3D/RenderDevice.h>
+#include <QEvent>
+#include <QPointF>
 #include <QWidget>
+#ifdef __ANDROID__
+#include "TouchControls.h"
+#endif
 #include <memory>
 #include <mutex>
 
 class CWorkspace;
 class QTimer;
+class QTouchEvent;
 class RenderStats;
 
 namespace Ogre {
@@ -70,7 +76,9 @@ public:
 	void OnSetFocus();
 	void OnKillFocus();
 
+#ifndef __ANDROID__
 	QPaintEngine* paintEngine() const override { return nullptr; }
+#endif
 
 protected:
 #ifdef _WIN32
@@ -85,10 +93,29 @@ protected:
 	void wheelEvent(QWheelEvent* event) override;
 	void keyPressEvent(QKeyEvent* event) override;
 #endif
+#ifdef __ANDROID__
+	bool event(QEvent* event) override;
+#endif
 	void focusInEvent(QFocusEvent* event) override;
 	void focusOutEvent(QFocusEvent* event) override;
 
 private:
+#ifdef __ANDROID__
+	// Touch gestures on the view: a tap clicks, a one-finger drag turns the camera (a right-button
+	// drag), and a pinch zooms (the mouse wheel).
+	void handleTouch(QTouchEvent* event);
+	void sendMouse(QEvent::Type type, QPointF position, Qt::MouseButton button);
+	void endTouchDrag();
+
+	int m_touchId = -1;
+	QPointF m_touchStart;
+	QPointF m_touchLast;
+	bool m_touchDragging = false;
+	bool m_pinching = false;
+	bool m_sendingTouchMouse = false;
+	std::unique_ptr<TouchControls> m_touchControls = std::make_unique<TouchControls>();
+	qreal m_pinchDistance = 0;
+#endif
 	class RenderStatsItem : public RBX::Stats::Item
 	{
 	public:

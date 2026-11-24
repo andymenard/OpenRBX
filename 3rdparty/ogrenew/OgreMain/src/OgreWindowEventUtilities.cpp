@@ -33,7 +33,7 @@ Torus Knot Software Ltd.
 #include "OgreRoot.h"
 #include "OgreException.h"
 
-#if OGRE_PLATFORM == OGRE_PLATFORM_LINUX
+#if OGRE_PLATFORM == OGRE_PLATFORM_LINUX && !defined(__ANDROID__)
 #include <X11/Xlib.h>
 void GLXProc( const XEvent &event );
 #endif
@@ -54,7 +54,7 @@ void WindowEventUtilities::messagePump()
 		TranslateMessage( &msg );
 		DispatchMessage( &msg );
 	}
-#elif OGRE_PLATFORM == OGRE_PLATFORM_LINUX
+#elif OGRE_PLATFORM == OGRE_PLATFORM_LINUX && !defined(__ANDROID__)
 	//GLX Message Pump (Display is probably Common for all RenderWindows.. But, to be safe loop
 	//through all)
 	Windows::iterator i = _msWindows.begin(), e = _msWindows.end();
@@ -212,7 +212,7 @@ LRESULT CALLBACK WindowEventUtilities::_WndProc(HWND hWnd, UINT uMsg, WPARAM wPa
 
 	return DefWindowProc( hWnd, uMsg, wParam, lParam );
 }
-#elif OGRE_PLATFORM == OGRE_PLATFORM_LINUX
+#elif OGRE_PLATFORM == OGRE_PLATFORM_LINUX && !defined(__ANDROID__)
 //--------------------------------------------------------------------------------//
 void GLXProc( const XEvent &event )
 {

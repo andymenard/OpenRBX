@@ -72,7 +72,7 @@ Vector2 glGetVector2(GLenum which);
 Vector3 glGetVector3(GLenum which);
 Vector4 glGetVector4(GLenum which);
 
-#if defined(G3D_EGL)
+#if defined(G3D_EGL) || defined(G3D_GL4ES)
 
     typedef EGLContext GLContext;
     inline GLContext glGetCurrentContext() {
@@ -240,7 +240,9 @@ void glMultMatrix(const CoordinateFrame& cf);
 /** Platform independent version of 
     wglGetProcAddress/glXGetProcAddress/NSGLGetProcAddress */
 inline void * glGetProcAddress(const char * name){
-    #if defined(G3D_EGL)
+    #if defined(G3D_GL4ES)
+        return gl4es_GetProcAddress(name);
+    #elif defined(G3D_EGL)
 	    return (void *)eglGetProcAddress(name);
     #elif defined(G3D_WIN32)
 	    return (void *)wglGetProcAddress(name);

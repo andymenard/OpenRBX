@@ -53,6 +53,10 @@ bool Hopper::askAddChild(const Instance* instance) const
 Hopper::Hopper()
 {
 	yLocation = Rect::BOTTOM;
+#ifdef __ANDROID__
+	// Keep the tools on the right, clear of the touch joystick's left-half input zone.
+	xLocation = Rect::RIGHT;
+#endif
 }
 
 void StarterPackService::render2d(Adorn* adorn)

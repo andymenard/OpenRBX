@@ -51,6 +51,11 @@ void postMouseButton(InputEvent::Button button, bool down);
 void postMouseWheel(float y);
 #endif
 
+#ifdef __ANDROID__
+// Presses or releases a key for on-screen controls, as a hardware key would.
+void setVirtualKey(unsigned scanCode, bool down);
+#endif
+
 } // namespace InputDevice
 
 #endif // INPUTDEVICE_H

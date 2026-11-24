@@ -75,9 +75,28 @@ set(OPENRBX_RUNTIME_FILES
   Client/win/ReflectionMetadata.xml
   Client/win/copyrights.txt
 )
+if (ANDROID)
+  if (NOT QT_HOST_PATH)
+    message(FATAL_ERROR "Android builds need QT_HOST_PATH set to a host build of the bundled Qt")
+  endif()
+  if (NOT ANDROID_STL STREQUAL "c++_shared")
+    message(FATAL_ERROR "Android builds need -DANDROID_STL=c++_shared, which Qt requires")
+  endif()
+  # Bundled dependencies are cross-built with the same NDK settings, and their install prefixes under
+  # 3rdparty/ are added to the find root so that find_package can see them through the NDK toolchain.
+  set(OPENRBX_ANDROID_CMAKE_ARGS
+    -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
+    -DANDROID_ABI=${ANDROID_ABI}
+    -DANDROID_PLATFORM=${ANDROID_PLATFORM}
+    -DANDROID_STL=${ANDROID_STL}
+  )
+  list(APPEND CMAKE_FIND_ROOT_PATH "${CMAKE_BINARY_DIR}/3rdparty")
+endif()
 if (NOT WIN32)
   set(THREADS_PREFER_PTHREAD_FLAG ON)
   find_package(Threads REQUIRED)
+endif()
+if (NOT WIN32 AND NOT ANDROID)
   find_package(OpenGL REQUIRED COMPONENTS OpenGL EGL)
   find_package(X11 REQUIRED)
 endif()
@@ -493,6 +512,9 @@ else()
     _LIB
     G3D_DEBUG_NOGUI
   )
+  if (ANDROID)
+    list(APPEND OPENRBX_COMMON_DEFINITIONS G3D_GL4ES)
+  endif()
 endif()
 
 set(OPENRBX_ENGINE_LIBRARIES)
@@ -549,6 +571,12 @@ add_engine_library(lua
   SOURCES ${OPENRBX_LUA_SOURCES}
 )
 
+if (ANDROID AND TARGET lua)
+  # Lua 5.1 stores string bytes after the TString header and reads them through a pointer to the
+  # header (svalue), which bionic's FORTIFY string checks treat as an overread and abort on.
+  target_compile_options(lua PRIVATE -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0)
+endif()
+
 add_engine_library(app
   DEFINITIONS _CRT_SECURE_NO_WARNINGS _RELEASE
   SOURCES ${OPENRBX_APP_SOURCES}
@@ -557,6 +585,10 @@ add_engine_library(app
 if (TARGET app)
   target_include_directories(app PRIVATE "${OPENRBX_3RDPARTY}/dr_libs")
   target_link_libraries(app PRIVATE OpenAL::OpenAL openmpt stb_vorbis CURL::libcurl)
+  if (ANDROID)
+    # Desktop Linux finds the OpenSSL headers in /usr/include; the NDK sysroot has none.
+    target_link_libraries(app PRIVATE OpenSSL::Crypto)
+  endif()
 endif()
 
 add_engine_library(network
@@ -589,6 +621,7 @@ add_engine_library(renderlib
   SOURCES ${OPENRBX_RENDERLIB_SOURCES}
 )
 
+if (NOT ANDROID)
 add_executable(webservice
   WebService/ThumbnailGenerator.cpp
   WebService/WebService.cpp
@@ -642,6 +675,8 @@ if (MSVC)
     target_link_options(webservice PRIVATE "/NODEFAULTLIB:${lib}")
   endforeach()
   set_property(TARGET webservice PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
+
 endif()
 
 find_program(CLANGFORMAT_BIN NAMES clang-format)
@@ -722,7 +757,7 @@ file(GLOB OPENRBX_ROBLOX_QT_RESOURCES
   "${PROJECT_SOURCE_DIR}/Client/win/res/*.png"
 )
 
-add_executable(roblox WIN32
+set(OPENRBX_ROBLOX_SOURCES
   Client/qt/AboutRobloxDialog.cpp
   Client/qt/ActiveDocView.cpp
   Client/qt/BrowserView.cpp
@@ -806,6 +841,28 @@ add_executable(roblox WIN32
   Client/win/UserInputUtil.cpp
   Client/win/VersionInfo.cpp
 )
+if (ANDROID)
+  # Qt provides the window, GL context and input on Android, in place of X11, GLX, SDL and WebKitGTK.
+  list(REMOVE_ITEM OPENRBX_ROBLOX_SOURCES
+    Client/qt/DisplayMode.cpp
+    Client/qt/HtmlView.cpp
+    Client/qt/InputDevice.cpp
+    Client/qt/NativeInput.cpp
+  )
+  list(APPEND OPENRBX_ROBLOX_SOURCES
+    Client/qt/android/AndroidAssets.cpp
+    Client/qt/android/DisplayModeQt.cpp
+    Client/qt/android/HtmlViewNull.cpp
+    Client/qt/android/InputDeviceQt.cpp
+    Client/qt/android/NativeInputQt.cpp
+    Client/qt/android/QtGLCaps.cpp
+    Client/qt/android/QtGLWindow.cpp
+    Client/qt/android/TouchControls.cpp
+  )
+  qt_add_executable(roblox ${OPENRBX_ROBLOX_SOURCES})
+else()
+  add_executable(roblox WIN32 ${OPENRBX_ROBLOX_SOURCES})
+endif()
 if (WIN32)
   target_sources(roblox PRIVATE Client/qt/PreviewView.cpp Client/qt/Roblox.rc)
 endif()
@@ -836,6 +893,35 @@ if (WIN32)
   )
 endif()
 add_dependencies(roblox runtime_files)
+if (ANDROID)
+  target_include_directories(roblox PRIVATE "${PROJECT_SOURCE_DIR}/Client/qt/android")
+  target_compile_definitions(roblox PRIVATE OPENRBX_GL4ES)
+  string(REPLACE ";" "," OPENRBX_CLIENT_LINK_GROUP "${OPENRBX_CLIENT_ENGINE_LIBRARIES}")
+  find_package(Qt6 REQUIRED COMPONENTS PrintSupport)
+  # gl4es comes first so the client's GL calls bind to it and not to the system GLES library.
+  target_link_libraries(roblox PRIVATE
+    glg3d
+    gl4es
+    Qt6::Widgets
+    Qt6::PrintSupport
+    scintilla
+    rgmain
+    "$<LINK_GROUP:RESCAN,${OPENRBX_CLIENT_LINK_GROUP},network>"
+    graphics3d
+    glu
+    OpenAL::OpenAL
+    openmpt
+    stb_vorbis
+    CURL::libcurl
+    EGL
+    android
+    log
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
+  )
+  include(cmake/AndroidPackage.cmake)
+  return()
+endif()
 if (NOT WIN32)
   find_package(PkgConfig REQUIRED)
   string(REPLACE ";" "," OPENRBX_CLIENT_LINK_GROUP "${OPENRBX_CLIENT_ENGINE_LIBRARIES}")

@@ -37,6 +37,9 @@ public:
 	void keyPressed();
 	void mouseMessage(RBX::UIEvent::EventType eventType, const G3D::Vector2& position);
 	void mouseWheel(bool forward, const G3D::Vector2& position);
+#ifdef __ANDROID__
+	void touchTap(const G3D::Vector2& position);
+#endif
 #ifdef _WIN32
 	void processMessage(unsigned message, int wParam, std::intptr_t lParam);
 #endif

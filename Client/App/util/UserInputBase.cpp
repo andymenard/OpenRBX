@@ -49,6 +49,9 @@ void UserInputBase::setCursorId(Adorn* adorn, const TextureId& cursorId)
 
 void UserInputBase::renderGameCursor(Adorn* adorn)
 {
+	if (cursorHidden) {
+		return;
+	}
 	G3D::ReferenceCountedPointer<TextureProxyBase> cursor = getGameCursor(adorn);
 	if (cursor.notNull()) {
 		G3D::Rect2D rect = adorn->getTextureSize(cursor);

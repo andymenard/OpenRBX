@@ -189,7 +189,12 @@ namespace Ogre {
 
 // Always enable unicode support for the moment
 // Perhaps disable in old versions of gcc if necessary
+#if defined(__ANDROID__)
+// UTFString needs std::char_traits for 16-bit code units, which libc++ does not provide.
+#define OGRE_UNICODE_SUPPORT 0
+#else
 #define OGRE_UNICODE_SUPPORT 1
+#endif
 
 #endif
 
